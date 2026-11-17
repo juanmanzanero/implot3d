@@ -4266,9 +4266,9 @@ static float GetBoxDecorationMargin(const ImPlot3DPlot& plot) {
     float margin = 0.0f;
     for (int i = 0; i < 3; ++i) {
         const ImPlot3DAxis& axis = plot.Axes[i];
-        float axis_margin = 2.0f * ComputeMaxTickLabelExtent(axis) + AXIS_TICK_INNER_PAD;
+        float axis_margin = 2.0f * ImPlot3D::ComputeMaxTickLabelExtent(axis) + ImPlot3D::AXIS_TICK_INNER_PAD;
         if (axis.HasLabel())
-            axis_margin += AXIS_LABEL_PAD + ImGui::CalcTextSize(axis.GetLabel()).y * 0.5f;
+            axis_margin += ImPlot3D::AXIS_LABEL_PAD + ImGui::CalcTextSize(axis.GetLabel()).y * 0.5f;
         margin = ImMax(margin, axis_margin);
     }
     return margin;
