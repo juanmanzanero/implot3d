@@ -40,6 +40,8 @@
 #include "implot3d.h"
 #include "implot3d_internal.h"
 
+#include <cmath>
+
 #ifndef IMGUI_DISABLE
 
 //-----------------------------------------------------------------------------
@@ -397,6 +399,11 @@ double GetPointDepth(ImPlot3DPoint p) {
     return p_rot.z;
 }
 
+double GetItemDepth(ImPlot3DPoint p) {
+    const double z_depth = GetItemData().Spec.ZDepth;
+    return std::isnan(z_depth) ? GetPointDepth(p) : z_depth;
+}
+
 struct RendererBase {
     RendererBase(int prims, int idx_consumed, int vtx_consumed) : Prims(prims), IdxConsumed(idx_consumed), VtxConsumed(vtx_consumed) {}
     const unsigned int Prims;       // Number of primitives to render
@@ -434,7 +441,7 @@ template <class _Getter, class _GetterColor, class _GetterSize> struct RendererM
             draw_list_3d._IdxWritePtr[2] = (ImDrawIdx)(draw_list_3d._VtxCurrentIdx + i);
             draw_list_3d._IdxWritePtr += 3;
             // Z
-            draw_list_3d._ZWritePtr[0] = GetPointDepth(p_plot);
+            draw_list_3d._ZWritePtr[0] = GetItemDepth(p_plot);
             draw_list_3d._ZWritePtr++;
         }
         // Update vertex count
@@ -467,7 +474,7 @@ template <class _Getter, class _GetterColor, class _GetterSize> struct RendererM
         for (int i = 0; i < Count; i = i + 2) {
             ImVec2 p1(p.x + Marker[i].x * size, p.y + Marker[i].y * size);
             ImVec2 p2(p.x + Marker[i + 1].x * size, p.y + Marker[i + 1].y * size);
-            PrimLine(draw_list_3d, p1, p2, HalfWeight, col, UV0, UV1, GetPointDepth(p_plot));
+            PrimLine(draw_list_3d, p1, p2, HalfWeight, col, UV0, UV1, GetItemDepth(p_plot));
         }
         return true;
     }
@@ -506,7 +513,7 @@ template <class _Getter, class _GetterColor> struct RendererLineStrip : Renderer
                 P3_plot = Getter(prim + 2);
             // Render the line segment
             PrimLineStrip(draw_list_3d, Joint, P1_clipped, P2_clipped, has_next ? &P3_plot : nullptr, HalfWeight, ColGetter(prim), UV0, UV1,
-                          GetPointDepth((P1_plot + P2_plot) * 0.5));
+                          GetItemDepth((P1_plot + P2_plot) * 0.5));
         } else {
             Joint.Valid = false;
         }
@@ -557,7 +564,7 @@ template <class _Getter, class _GetterColor> struct RendererLineStripSkip : Rend
                 }
                 // Render the line segment
                 PrimLineStrip(draw_list_3d, Joint, P1_clipped, P2_clipped, has_next ? &P3_plot : nullptr, HalfWeight, ColGetter(prim), UV0, UV1,
-                              GetPointDepth((P1_plot + P2_plot) * 0.5));
+                              GetItemDepth((P1_plot + P2_plot) * 0.5));
             }
         }
         if (!visible)
@@ -602,7 +609,7 @@ template <class _Getter, class _GetterColor> struct RendererLineSegments : Rende
                 ImVec2 P1_screen = PlotToPixels(P1_clipped);
                 ImVec2 P2_screen = PlotToPixels(P2_clipped);
                 // Render the line segment
-                PrimLine(draw_list_3d, P1_screen, P2_screen, HalfWeight, ColGetter(prim), UV0, UV1, GetPointDepth((P1_plot + P2_plot) * 0.5));
+                PrimLine(draw_list_3d, P1_screen, P2_screen, HalfWeight, ColGetter(prim), UV0, UV1, GetItemDepth((P1_plot + P2_plot) * 0.5));
             }
             return visible;
         }
@@ -660,7 +667,7 @@ template <class _Getter, class _GetterColor> struct RendererTriangleFill : Rende
         draw_list_3d._IdxWritePtr[2] = (ImDrawIdx)(draw_list_3d._VtxCurrentIdx + 2);
         draw_list_3d._IdxWritePtr += 3;
         // 1 Z per vertex
-        draw_list_3d._ZWritePtr[0] = GetPointDepth((p_plot[0] + p_plot[1] + p_plot[2]) / 3);
+        draw_list_3d._ZWritePtr[0] = GetItemDepth((p_plot[0] + p_plot[1] + p_plot[2]) / 3);
         draw_list_3d._ZWritePtr++;
 
         // Update vertex count
@@ -733,7 +740,7 @@ template <class _Getter, class _GetterColor> struct RendererQuadFill : RendererB
         draw_list_3d._IdxWritePtr += 6;
 
         // Add depth value for the quad
-        double z = GetPointDepth((p_plot[0] + p_plot[1] + p_plot[2] + p_plot[3]) / 4.0);
+        double z = GetItemDepth((p_plot[0] + p_plot[1] + p_plot[2] + p_plot[3]) / 4.0);
         draw_list_3d._ZWritePtr[0] = z;
         draw_list_3d._ZWritePtr[1] = z;
         draw_list_3d._ZWritePtr += 2;
@@ -812,7 +819,7 @@ template <class _Getter> struct RendererQuadImage : RendererBase {
         draw_list_3d._IdxWritePtr += 6;
 
         // Add depth value for the quad
-        double z = GetPointDepth((p_plot[0] + p_plot[1] + p_plot[2] + p_plot[3]) / 4.0);
+        double z = GetItemDepth((p_plot[0] + p_plot[1] + p_plot[2] + p_plot[3]) / 4.0);
         draw_list_3d._ZWritePtr[0] = z;
         draw_list_3d._ZWritePtr[1] = z;
         draw_list_3d._ZWritePtr += 2;
@@ -936,8 +943,8 @@ template <class _Getter> struct RendererSurfaceFill : RendererBase {
         draw_list_3d._IdxWritePtr += 6;
 
         // Add depth values for the two triangles
-        draw_list_3d._ZWritePtr[0] = GetPointDepth((p_plot[0] + p_plot[1] + p_plot[2]) / 3.0);
-        draw_list_3d._ZWritePtr[1] = GetPointDepth((p_plot[0] + p_plot[2] + p_plot[3]) / 3.0);
+        draw_list_3d._ZWritePtr[0] = GetItemDepth((p_plot[0] + p_plot[1] + p_plot[2]) / 3.0);
+        draw_list_3d._ZWritePtr[1] = GetItemDepth((p_plot[0] + p_plot[2] + p_plot[3]) / 3.0);
         draw_list_3d._ZWritePtr += 2;
 
         // Update vertex count

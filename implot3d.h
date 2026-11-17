@@ -35,6 +35,8 @@
 
 #pragma once
 #include "imgui.h"
+#include <limits>
+#include <stdarg.h>
 #ifndef IMGUI_DISABLE
 
 //-----------------------------------------------------------------------------
@@ -118,6 +120,7 @@ enum ImPlot3DProp_ {
     ImPlot3DProp_MarkerFillColors, // Array of marker fill colors (ImU32*); if nullptr, use MarkerFillColor for all
     ImPlot3DProp_Offset,           // Data index offset
     ImPlot3DProp_Stride,           // Data stride in bytes; IMPLOT3D_AUTO will result in sizeof(T) where T is the type passed to PlotX
+    ImPlot3DProp_ZDepth,           // Constant item Z-buffer depth; NaN uses the geometrically computed depth
     ImPlot3DProp_Flags             // Optional item flags; can be composed from common ImPlot3DItemFlags and/or specialized ImPlot3DXFlags
 };
 
@@ -132,8 +135,10 @@ enum ImPlot3DFlags_ {
     ImPlot3DFlags_Equal = 1 << 5,       // X, Y, and Z axes will be constrained to have the same units/pixel
     ImPlot3DFlags_NoRotate = 1 << 6,    // Lock rotation interaction
     ImPlot3DFlags_NoPan = 1 << 7,       // Lock panning/translation interaction
-    ImPlot3DFlags_NoZoom = 1 << 8,      // Lock zoom interaction
-    ImPlot3DFlags_NoInputs = 1 << 9,    // Disable all user inputs
+    ImPlot3DFlags_NoZoom = 1 << 8,       // Lock zoom interaction
+    ImPlot3DFlags_NoInputs = 1 << 9,     // Disable all user inputs
+    ImPlot3DFlags_AutoScaleBox = 1 << 10, // Automatically adapt the box X/Y/Z scale to the current rotation and viewport
+    ImPlot3DFlags_StretchBox = 1 << 11,   // Stretch the projected box independently in screen X/Y to fill the viewport
     ImPlot3DFlags_CanvasOnly = ImPlot3DFlags_NoTitle | ImPlot3DFlags_NoLegend | ImPlot3DFlags_NoMouseText,
 };
 
@@ -176,8 +181,9 @@ enum ImPlot3DStyleVar_ {
     ImPlot3DStyleVar_PlotDefaultSize, // ImVec2, default size used when ImVec2(0,0) is passed to BeginPlot
     ImPlot3DStyleVar_PlotMinSize,     // ImVec2, minimum size plot frame can be when shrunk
     ImPlot3DStyleVar_PlotPadding,     // ImVec2, padding between widget frame and plot area, labels, or outside legends (i.e. main padding)
-    ImPlot3DStyleVar_LabelPadding,    // ImVec2, padding between axes labels, tick labels, and plot edge
-    ImPlot3DStyleVar_ViewScaleFactor, // float, scale factor for 3D view, you can use it to make the whole plot larger or smaller
+    ImPlot3DStyleVar_LabelPadding,      // ImVec2, padding between axes labels, tick labels, and plot edge
+    ImPlot3DStyleVar_ViewScaleFactor,   // float, scale factor for 3D view, you can use it to make the whole plot larger or smaller
+    ImPlot3DStyleVar_AnnotationPadding, // ImVec2, text padding around annotation labels
     // Legend style
     ImPlot3DStyleVar_LegendPadding,      // ImVec2, legend padding from plot edges
     ImPlot3DStyleVar_LegendInnerPadding, // ImVec2, legend inner padding from legend edges
@@ -397,6 +403,7 @@ struct ImPlot3DSpec {
     ImU32* MarkerFillColors = nullptr;           // Per-index marker fill colors; if nullptr, use MarkerFillColor for all
     int Offset = 0;                              // Data index offset
     int Stride = IMPLOT3D_AUTO;                  // Data stride in bytes; IMPLOT3D_AUTO will result in sizeof(T) where T is the type passed to PlotX
+    double ZDepth = std::numeric_limits<double>::quiet_NaN(); // Constant item Z-buffer depth; NaN uses geometry
     ImPlot3DItemFlags Flags =
         ImPlot3DItemFlags_None; // Optional item flags; can be composed from common ImPlot3DItemFlags and/or specialized ImPlot3DXFlags
 
@@ -430,6 +437,7 @@ struct ImPlot3DSpec {
             case ImPlot3DProp_MarkerFillColor: MarkerFillColor = ImGui::ColorConvertU32ToFloat4((ImU32)v); return;
             case ImPlot3DProp_Offset: Offset = (int)v; return;
             case ImPlot3DProp_Stride: Stride = (int)v; return;
+            case ImPlot3DProp_ZDepth: ZDepth = (double)v; return;
             case ImPlot3DProp_Flags: Flags = (ImPlot3DItemFlags)v; return;
             default: break;
         }
@@ -603,6 +611,13 @@ IMPLOT3D_API void SetupBoxScale(double x, double y, double z);
 
 // Sets up the plot legend location and flags
 IMPLOT3D_API void SetupLegend(ImPlot3DLocation location, ImPlot3DLegendFlags flags = 0);
+// Sets the font used to render the plot legend. Pass nullptr to use the current ImGui font.
+IMPLOT3D_API void SetupLegendFont(ImFont* font);
+
+// Begin a popup for a legend entry.
+IMPLOT3D_API bool BeginLegendPopup(const char* label_id, ImGuiMouseButton mouse_button = ImGuiMouseButton_Right);
+// End a popup for a legend entry.
+IMPLOT3D_API void EndLegendPopup();
 
 //-----------------------------------------------------------------------------
 // [SECTION] Plot Items
@@ -694,6 +709,13 @@ IMPLOT3D_API void PlotDummy(const char* label_id, const ImPlot3DSpec& spec = ImP
 // [SECTION] Plot Utils
 //-----------------------------------------------------------------------------
 
+// Shows an annotation callout at a chosen point. Clamping keeps annotations in the plot area. Annotations are always rendered on top.
+IMPLOT3D_API void Annotation(double x, double y, double z, const ImVec4& col, const ImVec2& pix_offset, bool clamp, bool round = false);
+IMPLOT3D_API void Annotation(double x, double y, double z, const ImVec4& col, const ImVec2& pix_offset, bool clamp, const char* fmt, ...)
+    IM_FMTARGS(7);
+IMPLOT3D_API void AnnotationV(double x, double y, double z, const ImVec4& col, const ImVec2& pix_offset, bool clamp, const char* fmt, va_list args)
+    IM_FMTLIST(7);
+
 // Convert a position in the current plot's coordinate system to pixels
 IMPLOT3D_API ImVec2 PlotToPixels(const ImPlot3DPoint& point);
 IMPLOT3D_API ImVec2 PlotToPixels(double x, double y, double z);
@@ -719,6 +741,9 @@ IMPLOT3D_API ImVec2 GetPlotRectSize();
 
 // Returns the ImDrawList used for rendering plot items. Use this to add custom rendering inside plots
 IMPLOT3D_API ImDrawList* GetPlotDrawList();
+// Push clip rect for rendering to the current plot area. The rect can be expanded or contracted by #expand pixels.
+IMPLOT3D_API void PushPlotClipRect(float expand = 0);
+IMPLOT3D_API void PopPlotClipRect();
 
 //-----------------------------------------------------------------------------
 // [SECTION] Styles API (legacy)
@@ -1036,8 +1061,9 @@ struct ImPlot3DStyle {
     ImVec2 PlotDefaultSize; // Default size used when ImVec2(0,0) is passed to BeginPlot
     ImVec2 PlotMinSize;     // Minimum size plot frame can be when shrunk
     ImVec2 PlotPadding;     // Padding between widget frame and plot area
-    ImVec2 LabelPadding;    // Padding between axes labels, tick labels, and plot edge
-    float ViewScaleFactor;  // Scale factor for 3D view
+    ImVec2 LabelPadding;      // Padding between axes labels, tick labels, and plot edge
+    float ViewScaleFactor;    // Scale factor for 3D view
+    ImVec2 AnnotationPadding; // Text padding around annotation labels
     // Legend style
     ImVec2 LegendPadding;      // Legend padding from plot edges
     ImVec2 LegendInnerPadding; // Legend inner padding from legend edges

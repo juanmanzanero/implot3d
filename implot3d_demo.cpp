@@ -422,6 +422,8 @@ void DemoSurfacePlots() {
     CHECKBOX_FLAG(flags, ImPlot3DSurfaceFlags_NoLines);
     CHECKBOX_FLAG(flags, ImPlot3DSurfaceFlags_NoFill);
     CHECKBOX_FLAG(flags, ImPlot3DSurfaceFlags_NoMarkers);
+    static bool force_depth = false;
+    ImGui::Checkbox("Force constant Z depth", &force_depth);
 
     // Begin the plot
     if (selected_fill == 1)
@@ -434,6 +436,8 @@ void DemoSurfacePlots() {
         spec.Flags = flags;
         spec.Marker = ImPlot3DMarker_Square;
         spec.LineColor = ImPlot3D::GetColormapColor(1);
+        if (force_depth)
+            spec.ZDepth = 10.0;
         if (selected_fill == 0)
             spec.FillColor = solid_color;
         else if (selected_fill == 2)
@@ -814,6 +818,7 @@ void DemoLegendOptions() {
         ImPlot3D::SetupAxes("X-Axis", "Y-Axis", "Z-Axis");
         ImPlot3D::SetupAxesLimits(-1, 1, -1, 1, -1, 1);
         ImPlot3D::SetupLegend(loc, flags);
+        ImPlot3D::SetupLegendFont(ImGui::GetFont()); // Replace with any loaded ImFont* to customize the legend font.
 
         // Generate some 3D line data
         static float t = 0;
@@ -840,6 +845,10 @@ void DemoLegendOptions() {
         }
 
         ImPlot3D::PlotLine("Helix A", xs1, ys1, zs1, count);
+        if (ImPlot3D::BeginLegendPopup("Helix A")) {
+            ImGui::TextUnformatted("Custom popup for Helix A");
+            ImPlot3D::EndLegendPopup();
+        }
         ImPlot3D::PlotLine("Helix B##IDText", xs2, ys2, zs2, count); // Text after ## used for ID only
         ImPlot3D::PlotLine("##NotListed", xs3, ys3, zs3, count);     // Plotted, but not added to legend
 
@@ -909,6 +918,8 @@ void DemoMarkersAndText() {
         ImPlot3D::PushStyleColor(ImPlot3DCol_InlayText, ImVec4(1, 0, 1, 1));
         ImPlot3D::PlotText("Rotated Text", 0.5, 0.5, 6.0, IM_PI / 4, ImVec2(0, 0));
         ImPlot3D::PopStyleColor();
+
+        ImPlot3D::Annotation(0.5, 0.5, 4.0, ImVec4(0.2f, 0.7f, 1.0f, 1.0f), ImVec2(20, -20), true, "Annotation");
 
         ImPlot3D::EndPlot();
     }
@@ -1161,10 +1172,22 @@ void DemoBoxScale() {
     }
 
     static float scale[3] = {1.0f, 1.0f, 1.0f};
+    static bool auto_scale = false;
+    static bool stretch = false;
     ImGui::SliderFloat3("Box Scale", scale, 0.1f, 2.0f, "%.2f");
+    ImGui::Checkbox("Auto Scale Box", &auto_scale);
+    ImGui::SameLine();
+    ImGui::Checkbox("Stretch To Fill", &stretch);
 
-    if (ImPlot3D::BeginPlot("##BoxScale")) {
-        ImPlot3D::SetupBoxScale(scale[0], scale[1], scale[2]);
+    ImPlot3DFlags flags = ImPlot3DFlags_None;
+    if (auto_scale)
+        flags = (ImPlot3DFlags)(flags | ImPlot3DFlags_AutoScaleBox);
+    if (stretch)
+        flags = (ImPlot3DFlags)(flags | ImPlot3DFlags_StretchBox);
+
+    if (ImPlot3D::BeginPlot("##BoxScale", ImVec2(-1, 0), flags)) {
+        if (!auto_scale)
+            ImPlot3D::SetupBoxScale(scale[0], scale[1], scale[2]);
         ImPlot3D::PlotLine("3D Curve", xs, ys, zs, N);
         ImPlot3D::EndPlot();
     }
@@ -2070,6 +2093,7 @@ void ShowStyleEditor(ImPlot3DStyle* ref) {
             ImGui::SliderFloat2("PlotPadding", (float*)&style.PlotPadding, 0.0f, 20.0f, "%.0f");
             ImGui::SliderFloat2("LabelPadding", (float*)&style.LabelPadding, 0.0f, 20.0f, "%.0f");
             ImGui::SliderFloat("ViewScaleFactor", (float*)&style.ViewScaleFactor, 0.1f, 2.0f, "%.2f");
+            ImGui::SliderFloat2("AnnotationPadding", (float*)&style.AnnotationPadding, 0.0f, 10.0f, "%.0f");
             ImGui::Text("Legend Styling");
             ImGui::SliderFloat2("LegendPadding", (float*)&style.LegendPadding, 0.0f, 20.0f, "%.0f");
             ImGui::SliderFloat2("LegendInnerPadding", (float*)&style.LegendInnerPadding, 0.0f, 10.0f, "%.0f");
