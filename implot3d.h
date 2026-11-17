@@ -135,8 +135,10 @@ enum ImPlot3DFlags_ {
     ImPlot3DFlags_Equal = 1 << 5,       // X, Y, and Z axes will be constrained to have the same units/pixel
     ImPlot3DFlags_NoRotate = 1 << 6,    // Lock rotation interaction
     ImPlot3DFlags_NoPan = 1 << 7,       // Lock panning/translation interaction
-    ImPlot3DFlags_NoZoom = 1 << 8,      // Lock zoom interaction
-    ImPlot3DFlags_NoInputs = 1 << 9,    // Disable all user inputs
+    ImPlot3DFlags_NoZoom = 1 << 8,       // Lock zoom interaction
+    ImPlot3DFlags_NoInputs = 1 << 9,     // Disable all user inputs
+    ImPlot3DFlags_AutoScaleBox = 1 << 10, // Automatically adapt the box X/Y/Z scale to the current rotation and viewport
+    ImPlot3DFlags_StretchBox = 1 << 11,   // Stretch the projected box independently in screen X/Y to fill the viewport
     ImPlot3DFlags_CanvasOnly = ImPlot3DFlags_NoTitle | ImPlot3DFlags_NoLegend | ImPlot3DFlags_NoMouseText,
 };
 

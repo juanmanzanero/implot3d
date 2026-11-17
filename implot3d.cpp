@@ -1051,10 +1051,6 @@ void RenderTickMarks(ImDrawList* draw_list, const ImPlot3DPlot& plot, const ImPl
         }
         tick_dir.Normalize();
 
-        // Tick lengths in NDC units
-        const double major_size_ndc = 0.06;
-        const double minor_size_ndc = 0.03;
-
         for (int t = 0; t < axis.Ticker.TickCount(); ++t) {
             const ImPlot3DTick& tick = axis.Ticker.Ticks[t];
             double v = (tick.PlotPos - axis.Range.Min) / (axis.Range.Max - axis.Range.Min);
@@ -1064,15 +1060,21 @@ void RenderTickMarks(ImDrawList* draw_list, const ImPlot3DPlot& plot, const ImPl
                 continue;
             ImPlot3DPoint tick_pos_ndc = PlotToNDC(axis_start + axis_dir * (v * axis_len));
 
-            // Half tick on each side of the axis line
-            double size_tick_ndc = tick.Major ? major_size_ndc : minor_size_ndc;
-            ImPlot3DPoint half_tick_ndc = tick_dir * (size_tick_ndc * 0.5);
+            // Construct a short segment in NDC, project it, then normalize its length in screen space.
+            // This keeps tick marks visually constant regardless of zoom, box scale, or stretch.
+            const ImPlot3DPoint half_tick_ndc = tick_dir * 0.05;
+            ImVec2 T1_screen = NDCToPixels(tick_pos_ndc - half_tick_ndc);
+            ImVec2 T2_screen = NDCToPixels(tick_pos_ndc + half_tick_ndc);
+            const ImVec2 center = (T1_screen + T2_screen) * 0.5f;
+            ImVec2 dir = T2_screen - T1_screen;
+            const float len = ImSqrt(ImLengthSqr(dir));
+            if (len <= 1e-6f)
+                continue;
+            dir /= len;
 
-            ImPlot3DPoint T1_ndc = tick_pos_ndc - half_tick_ndc;
-            ImPlot3DPoint T2_ndc = tick_pos_ndc + half_tick_ndc;
-
-            ImVec2 T1_screen = NDCToPixels(T1_ndc);
-            ImVec2 T2_screen = NDCToPixels(T2_ndc);
+            const float tick_size_px = tick.Major ? 16.0f : 8.0f;
+            T1_screen = center - dir * (tick_size_px * 0.5f);
+            T2_screen = center + dir * (tick_size_px * 0.5f);
 
             draw_list->AddLine(T1_screen, T2_screen, col_tick);
         }
@@ -1272,8 +1274,11 @@ void ComputeBoxCorners(ImPlot3DPoint* corners, const ImPlot3DPoint& range_min, c
 // Convert a position in the plot's NDC to pixels
 ImVec2 NDCToPixels(const ImPlot3DPlot& plot, const ImPlot3DPoint& point) {
     ImVec2 center = plot.PlotRect.GetCenter();
+    const ImVec2 stretch = plot.GetViewStretchScale();
     ImPlot3DPoint point_pix = plot.GetViewScale() * (plot.Rotation * point);
     point_pix.y *= -1.0f; // Invert y-axis
+    point_pix.x *= stretch.x;
+    point_pix.y *= stretch.y;
     point_pix.x += center.x;
     point_pix.y += center.y;
 
@@ -1472,7 +1477,6 @@ double NiceNum(double x, bool round) {
 void Locator_Default(ImPlot3DTicker& ticker, const ImPlot3DRange& range, float pixels, ImPlot3DFormatter formatter, void* formatter_data) {
     if (range.Min == range.Max)
         return;
-    const int nMinor = ImMin(ImMax(1, (int)IM_ROUND(pixels / 30.0f)), 5);
     const int nMajor = ImMax(2, (int)IM_ROUND(pixels / 80.0f));
     const int max_ticks_labels = 7;
     const double nice_range = NiceNum(range.Size() * 0.99, false);
@@ -1482,6 +1486,11 @@ void Locator_Default(ImPlot3DTicker& ticker, const ImPlot3DRange& range, float p
     const double min_interval = nextafter(magnitude, HUGE_VAL) - magnitude;
     if (interval < min_interval)
         interval = min_interval;
+
+    const double p10 = ImPow(10.0, floor(ImLog10(interval)));
+    const double lead = interval / p10;
+    const int nMinor = ImAbs(lead - 2.0) < 1e-9 ? 4 : 5;
+
     const double graphmin = floor(range.Min / interval) * interval;
     const double graphmax = ceil(range.Max / interval) * interval;
     bool first_major_set = false;
@@ -1737,13 +1746,26 @@ void ShowPlotContextMenu(ImPlot3DPlot& plot) {
 
     if ((ImGui::BeginMenu("Box"))) {
         ImGui::PushItemWidth(75);
+
+        ImGui::CheckboxFlags("Stretch To Fill", (unsigned int*)&plot.Flags, ImPlot3DFlags_StretchBox);
+        if (ImGui::CheckboxFlags("Auto Scale", (unsigned int*)&plot.Flags, ImPlot3DFlags_AutoScaleBox)) {
+            if (!ImHasFlag(plot.Flags, ImPlot3DFlags_AutoScaleBox)) {
+                plot.Axes[0].NDCScale = 1.0;
+                plot.Axes[1].NDCScale = 1.0;
+                plot.Axes[2].NDCScale = 1.0;
+            }
+        }
+
         float temp_scale[3] = {(float)plot.Axes[0].NDCScale, (float)plot.Axes[1].NDCScale, (float)plot.Axes[2].NDCScale};
+        ImGui::BeginDisabled(ImHasFlag(plot.Flags, ImPlot3DFlags_AutoScaleBox));
         if (ImGui::DragFloat("Scale X", &temp_scale[0], 0.01f, 0.1f, 3.0f))
             plot.Axes[0].NDCScale = ImMax(temp_scale[0], 0.01f);
         if (ImGui::DragFloat("Scale Y", &temp_scale[1], 0.01f, 0.1f, 3.0f))
             plot.Axes[1].NDCScale = ImMax(temp_scale[1], 0.01f);
         if (ImGui::DragFloat("Scale Z", &temp_scale[2], 0.01f, 0.1f, 3.0f))
             plot.Axes[2].NDCScale = ImMax(temp_scale[2], 0.01f);
+        ImGui::EndDisabled();
+
         ImGui::PopItemWidth();
         ImGui::EndMenu();
     }
@@ -2475,11 +2497,12 @@ ImPlot3DRay PixelsToNDCRay(const ImVec2& pix) {
 
     // Calculate zoom factor and plot center
     float zoom = plot.GetViewScale();
+    const ImVec2 stretch = plot.GetViewStretchScale();
     ImVec2 center = plot.PlotRect.GetCenter();
 
     // Undo screen transformations to get back to NDC space
-    float x = (pix.x - center.x) / zoom;
-    float y = -(pix.y - center.y) / zoom; // Invert y-axis
+    float x = (pix.x - center.x) / (zoom * stretch.x);
+    float y = -(pix.y - center.y) / (zoom * stretch.y); // Invert y-axis
 
     // Define near and far points in NDC space along the z-axis
     ImPlot3DPoint ndc_near = plot.Rotation.Inverse() * ImPlot3DPoint(x, y, 10.0f);
@@ -2678,8 +2701,11 @@ void HandleInput(ImPlot3DPlot& plot) {
             // Compute delta_pixels in 3D (invert y-axis)
             ImPlot3DPoint delta_pixels(delta.x, -delta.y, 0.0f);
 
-            // Convert delta to NDC space
+            // Convert delta to NDC space, undoing optional screen stretch.
             float zoom = plot.GetViewScale();
+            const ImVec2 stretch = plot.GetViewStretchScale();
+            delta_pixels.x /= stretch.x;
+            delta_pixels.y /= stretch.y;
             ImPlot3DPoint delta_NDC = plot.Rotation.Inverse() * (delta_pixels / zoom);
 
             // Create points in NDC space representing the new shifted range
@@ -3055,6 +3081,13 @@ void SetupLock() {
             axis.Locator(axis.Ticker, axis.Range, pixels, axis.Formatter, axis.FormatterData);
         }
     }
+
+    // Update automatic box scaling after tick label sizes are known.
+    if (ImHasFlag(plot.Flags, ImPlot3DFlags_AutoScaleBox))
+        plot.AutoScaleBox();
+
+    // Update optional screen-space stretch after automatic box scaling.
+    plot.UpdateViewStretchScale();
 
     // Cache axis colors
     for (int i = 0; i < 3; i++) {
@@ -4213,8 +4246,10 @@ void ImPlot3DPlot::SetRange(const ImPlot3DPoint& min, const ImPlot3DPoint& max) 
 }
 
 float ImPlot3DPlot::GetViewScale() const {
-    return ImMin(PlotRect.GetWidth(), PlotRect.GetHeight()) / 1.8f * ImPlot3D::GImPlot3D->Style.ViewScaleFactor;
+    return ImMin(PlotRect.GetWidth(), PlotRect.GetHeight()) / ImSqrt(3.0f) * ImPlot3D::GImPlot3D->Style.ViewScaleFactor;
 }
+
+ImVec2 ImPlot3DPlot::GetViewStretchScale() const { return StretchViewScale; }
 
 ImPlot3DPoint ImPlot3DPlot::GetBoxScale() const { return ImPlot3DPoint(Axes[0].NDCSize(), Axes[1].NDCSize(), Axes[2].NDCSize()); }
 
@@ -4225,6 +4260,146 @@ void ImPlot3DPlot::ApplyEqualAspect(ImAxis3D ref_axis) {
             Axes[i].SetAspect(aspect);
         }
     }
+}
+
+static float GetBoxDecorationMargin(const ImPlot3DPlot& plot) {
+    float margin = 0.0f;
+    for (int i = 0; i < 3; ++i) {
+        const ImPlot3DAxis& axis = plot.Axes[i];
+        float axis_margin = 2.0f * ComputeMaxTickLabelExtent(axis) + AXIS_TICK_INNER_PAD;
+        if (axis.HasLabel())
+            axis_margin += AXIS_LABEL_PAD + ImGui::CalcTextSize(axis.GetLabel()).y * 0.5f;
+        margin = ImMax(margin, axis_margin);
+    }
+    return margin;
+}
+
+void ImPlot3DPlot::AutoScaleBox() {
+    const ImPlot3DQuat& q = Rotation;
+    const float x = q.x;
+    const float y = q.y;
+    const float z = q.z;
+    const float w = q.w;
+
+    const float xx = x + x;
+    const float yy = y + y;
+    const float zz = z + z;
+    const float xy = x * yy;
+    const float xz = x * zz;
+    const float yz = y * zz;
+    const float wx = w * xx;
+    const float wy = w * yy;
+    const float wz = w * zz;
+
+    const float r11 = 1.0f - (y * yy + z * zz);
+    const float r12 = xy - wz;
+    const float r13 = xz + wy;
+    const float r21 = xy + wz;
+    const float r22 = 1.0f - (x * xx + z * zz);
+    const float r23 = yz - wx;
+
+    const float A1 = ImAbs(r11) + ImAbs(r12);
+    const float A2 = ImAbs(r21) + ImAbs(r22);
+    const float B1 = ImAbs(r13);
+    const float B2 = ImAbs(r23);
+
+    const float margin = GetBoxDecorationMargin(*this);
+    const float W = ImMax(0.0f, (PlotRect.GetWidth() - 2.0f * margin) / GetViewScale());
+    const float H = ImMax(0.0f, (PlotRect.GetHeight() - 2.0f * margin) / GetViewScale());
+
+    const auto safe_div = [](float num, float den) {
+        return ImAbs(den) < 1e-8f ? 1e30f : num / den;
+    };
+
+    float s = 1.0f;
+    float t = 1.0f;
+    const float det = A1 * B2 - A2 * B1;
+    if (ImAbs(det) > 1e-8f) {
+        s = (W * B2 - H * B1) / det;
+        t = (H * A1 - W * A2) / det;
+    } else {
+        t = 0.0f;
+        s = ImMin(safe_div(W, ImMax(1e-8f, A1)), safe_div(H, ImMax(1e-8f, A2)));
+    }
+
+    s = ImMax(0.0f, s);
+    t = ImMax(0.0f, t);
+
+    const float scale_min = 0.8f;
+    const float scale_max = 3.0f;
+    float s_clamped = ImClamp(s, scale_min, scale_max);
+    float t_clamped = ImClamp(t, scale_min, scale_max);
+
+    if (s_clamped != s || t_clamped != t) {
+        s = s_clamped;
+        t = t_clamped;
+
+        const float s1 = safe_div(W - t * B1, ImMax(1e-8f, A1));
+        const float s2 = safe_div(H - t * B2, ImMax(1e-8f, A2));
+        s = ImClamp(ImMax(0.0f, ImMin(s1, s2)), scale_min, scale_max);
+
+        const float t1 = safe_div(W - s * A1, ImMax(1e-8f, B1));
+        const float t2 = safe_div(H - s * A2, ImMax(1e-8f, B2));
+        t = ImClamp(ImMax(0.0f, ImMin(t1, t2)), scale_min, scale_max);
+    }
+
+    const float used_w = s * A1 + t * B1;
+    const float used_h = s * A2 + t * B2;
+    const float k_w = used_w > 0.0f ? W / used_w : 1.0f;
+    const float k_h = used_h > 0.0f ? H / used_h : 1.0f;
+    const float k = ImMin(k_w, k_h);
+    if (k < 1.0f) {
+        float s_try = ImClamp(s * k, scale_min, scale_max);
+        float t_try = t;
+        if (s_try * A1 + t_try * B1 > W + 1e-4f || s_try * A2 + t_try * B2 > H + 1e-4f)
+            t_try = ImClamp(t * k, scale_min, scale_max);
+        s = s_try;
+        t = t_try;
+    }
+
+    Axes[0].NDCScale = s;
+    Axes[1].NDCScale = s;
+    Axes[2].NDCScale = t;
+}
+
+void ImPlot3DPlot::UpdateViewStretchScale() {
+    if (!ImPlot3D::ImHasFlag(Flags, ImPlot3DFlags_StretchBox)) {
+        StretchViewScale = ImVec2(1.0f, 1.0f);
+        return;
+    }
+
+    const ImPlot3DQuat& q = Rotation;
+    const float x = q.x;
+    const float y = q.y;
+    const float z = q.z;
+    const float w = q.w;
+
+    const float xx = x + x;
+    const float yy = y + y;
+    const float zz = z + z;
+    const float xy = x * yy;
+    const float xz = x * zz;
+    const float yz = y * zz;
+    const float wx = w * xx;
+    const float wy = w * yy;
+    const float wz = w * zz;
+
+    const float f = GetViewScale();
+    const float extent_x =
+        ImAbs(f * (1.0f - (y * yy + z * zz)) * (float)Axes[0].NDCScale) +
+        ImAbs(f * (xy - wz) * (float)Axes[1].NDCScale) +
+        ImAbs(f * (xz + wy) * (float)Axes[2].NDCScale);
+    const float extent_y =
+        ImAbs(f * (xy + wz) * (float)Axes[0].NDCScale) +
+        ImAbs(f * (1.0f - (x * xx + z * zz)) * (float)Axes[1].NDCScale) +
+        ImAbs(f * (yz - wx) * (float)Axes[2].NDCScale);
+
+    const float margin = GetBoxDecorationMargin(*this);
+    const float available_x = ImMax(1.0f, PlotRect.GetWidth() - 2.0f * margin);
+    const float available_y = ImMax(1.0f, PlotRect.GetHeight() - 2.0f * margin);
+
+    StretchViewScale.x = extent_x > 1e-6f ? available_x / extent_x : 1.0f;
+    StretchViewScale.y = extent_y > 1e-6f ? available_y / extent_y : 1.0f;
 }
 
 //-----------------------------------------------------------------------------
