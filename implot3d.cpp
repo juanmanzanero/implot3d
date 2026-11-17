@@ -452,6 +452,9 @@ void RenderLegend() {
     const ImGuiIO& IO = ImGui::GetIO();
 
     ImPlot3DLegend& legend = plot.Items.Legend;
+    if (legend.Font != nullptr)
+        ImGui::PushFont(legend.Font);
+
     const bool legend_horz = ImPlot3D::ImHasFlag(legend.Flags, ImPlot3DLegendFlags_Horizontal);
     const ImVec2 legend_size = CalcLegendSize(plot.Items, gp.Style.LegendInnerPadding, gp.Style.LegendSpacing, !legend_horz);
     const ImVec2 legend_pos = GetLocationPos(plot.PlotRect, legend_size, legend.Location, gp.Style.LegendPadding);
@@ -504,6 +507,32 @@ void RenderLegend() {
     ShowLegendEntries(plot.Items, legend.Rect, gp.Style.LegendInnerPadding, gp.Style.LegendSpacing, !legend_horz, *draw_list);
     draw_list->AddRect(legend.RectClamped.Min, legend.RectClamped.Max, col_bd);
     ImGui::PopClipRect();
+
+    if (legend.Font != nullptr)
+        ImGui::PopFont();
+}
+
+bool BeginLegendPopup(const char* label_id, ImGuiMouseButton mouse_button) {
+    ImPlot3DContext& gp = *GImPlot3D;
+    IM_ASSERT_USER_ERROR(gp.CurrentItems != nullptr, "BeginLegendPopup() needs to be called within an itemized context!");
+    SetupLock();
+
+    ImGuiWindow* window = GImGui->CurrentWindow;
+    if (window->SkipItems)
+        return false;
+
+    const ImGuiID id = gp.CurrentItems->GetItemID(label_id);
+    if (ImGui::IsMouseReleased(mouse_button)) {
+        ImPlot3DItem* item = gp.CurrentItems->GetItem(id);
+        if (item != nullptr && item->LegendHovered)
+            ImGui::OpenPopupEx(id);
+    }
+    return ImGui::BeginPopupEx(id, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoSavedSettings);
+}
+
+void EndLegendPopup() {
+    SetupLock();
+    ImGui::EndPopup();
 }
 
 //-----------------------------------------------------------------------------
@@ -1755,6 +1784,8 @@ bool BeginPlot(const char* title_id, const ImVec2& size, ImPlot3DFlags flags) {
     ImGuiContext& g = *GImGui;
     ImGuiWindow* window = g.CurrentWindow;
 
+    gp.Annotations.Reset();
+
     // Skip if needed
     if (window->SkipItems)
         return false;
@@ -1874,6 +1905,54 @@ void EndPlot() {
 
     // Pop plot rect clipping
     ImGui::PopClipRect();
+
+    // Render annotations on top of 3D items.
+    if (gp.Annotations.Annotations.Size > 0) {
+        ImDrawList& draw_list = *GImGui->CurrentWindow->DrawList;
+        PushPlotClipRect();
+        for (int i = 0; i < gp.Annotations.Annotations.Size; ++i) {
+            const char* txt = gp.Annotations.GetText(i);
+            ImPlot3DAnnotation& an = gp.Annotations.Annotations[i];
+            const ImVec2 txt_size = ImGui::CalcTextSize(txt);
+            const ImVec2 size = txt_size + gp.Style.AnnotationPadding * 2.0f;
+            ImVec2 pos = an.Pos;
+
+            if (an.Offset.x == 0)
+                pos.x -= size.x * 0.5f;
+            else if (an.Offset.x > 0)
+                pos.x += an.Offset.x;
+            else
+                pos.x -= size.x - an.Offset.x;
+
+            if (an.Offset.y == 0)
+                pos.y -= size.y * 0.5f;
+            else if (an.Offset.y > 0)
+                pos.y += an.Offset.y;
+            else
+                pos.y -= size.y - an.Offset.y;
+
+            if (an.Clamp)
+                pos = ClampLabelPos(pos, size, plot.PlotRect.Min, plot.PlotRect.Max);
+
+            ImRect rect(pos, pos + size);
+            if (an.Offset.x != 0 || an.Offset.y != 0) {
+                ImVec2 corners[4] = {rect.GetTL(), rect.GetTR(), rect.GetBR(), rect.GetBL()};
+                int min_corner = 0;
+                float min_len = FLT_MAX;
+                for (int c = 0; c < 4; ++c) {
+                    const float len = ImLengthSqr(an.Pos - corners[c]);
+                    if (len < min_len) {
+                        min_corner = c;
+                        min_len = len;
+                    }
+                }
+                draw_list.AddLine(an.Pos, corners[min_corner], an.ColorBg);
+            }
+            draw_list.AddRectFilled(rect.Min, rect.Max, an.ColorBg);
+            draw_list.AddText(pos + gp.Style.AnnotationPadding, an.ColorFg, txt);
+        }
+        PopPlotClipRect();
+    }
 
     // Reset legend hover
     plot.Items.Legend.Hovered = false;
@@ -2159,11 +2238,73 @@ void SetupLegend(ImPlot3DLocation location, ImPlot3DLegendFlags flags) {
     legend.PreviousFlags = flags;
 }
 
+void SetupLegendFont(ImFont* font) {
+    ImPlot3DContext& gp = *GImPlot3D;
+    IM_ASSERT_USER_ERROR(gp.CurrentPlot != nullptr && !gp.CurrentPlot->SetupLocked,
+                         "SetupLegendFont() needs to be called after BeginPlot() and before any setup locking functions (e.g. PlotX)!");
+    IM_ASSERT_USER_ERROR(gp.CurrentItems != nullptr, "SetupLegendFont() needs to be called within an itemized context!");
+    gp.CurrentItems->Legend.Font = font;
+}
+
 //-----------------------------------------------------------------------------
 // [SECTION] Plot Utils
 //-----------------------------------------------------------------------------
 
 ImPlot3DPlot* GetCurrentPlot() { return GImPlot3D->CurrentPlot; }
+
+static inline double RoundTo(double val, int prec) {
+    const double p = pow(10.0, (double)prec);
+    return floor(val * p + 0.5) / p;
+}
+static inline int OrderToPrecision(int order) { return order > 0 ? 0 : 1 - order; }
+static inline int OrderOfMagnitude(double val) { return val == 0 ? 0 : (int)floor(log10(fabs(val))); }
+static inline int Precision(double val) { return OrderToPrecision(OrderOfMagnitude(val)); }
+
+static inline int AxisPrecision(const ImPlot3DAxis& axis) {
+    const double range = axis.Ticker.TickCount() > 1 ? axis.Ticker.Ticks[1].PlotPos - axis.Ticker.Ticks[0].PlotPos : axis.Range.Size();
+    return Precision(range);
+}
+
+static inline double RoundAxisValue(const ImPlot3DAxis& axis, double value) { return RoundTo(value, AxisPrecision(axis)); }
+
+void LabelAxisValue(const ImPlot3DAxis& axis, double value, char* buff, int size, bool round) {
+    if (round)
+        value = RoundAxisValue(axis, value);
+    axis.Formatter(value, buff, size, axis.FormatterData);
+}
+
+void Annotation(double x, double y, double z, const ImVec4& col, const ImVec2& offset, bool clamp, bool round) {
+    ImPlot3DContext& gp = *GImPlot3D;
+    IM_ASSERT_USER_ERROR(gp.CurrentPlot != nullptr, "Annotation() needs to be called between BeginPlot() and EndPlot()!");
+    SetupLock();
+
+    const ImPlot3DPlot& plot = *gp.CurrentPlot;
+    char x_buff[IMPLOT3D_LABEL_MAX_SIZE];
+    char y_buff[IMPLOT3D_LABEL_MAX_SIZE];
+    char z_buff[IMPLOT3D_LABEL_MAX_SIZE];
+    LabelAxisValue(plot.Axes[ImAxis3D_X], x, x_buff, sizeof(x_buff), round);
+    LabelAxisValue(plot.Axes[ImAxis3D_Y], y, y_buff, sizeof(y_buff), round);
+    LabelAxisValue(plot.Axes[ImAxis3D_Z], z, z_buff, sizeof(z_buff), round);
+    Annotation(x, y, z, col, offset, clamp, "%s, %s, %s", x_buff, y_buff, z_buff);
+}
+
+void AnnotationV(double x, double y, double z, const ImVec4& col, const ImVec2& offset, bool clamp, const char* fmt, va_list args) {
+    ImPlot3DContext& gp = *GImPlot3D;
+    IM_ASSERT_USER_ERROR(gp.CurrentPlot != nullptr, "Annotation() needs to be called between BeginPlot() and EndPlot()!");
+    SetupLock();
+
+    const ImVec2 pos = PlotToPixels(ImPlot3DPoint(x, y, z));
+    const ImU32 bg = ImGui::GetColorU32(col);
+    const ImU32 fg = col.w == 0 ? GetStyleColorU32(ImPlot3DCol_InlayText) : CalcTextColor(col);
+    gp.Annotations.AppendV(pos, offset, bg, fg, clamp, fmt, args);
+}
+
+void Annotation(double x, double y, double z, const ImVec4& col, const ImVec2& offset, bool clamp, const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    AnnotationV(x, y, z, col, offset, clamp, fmt, args);
+    va_end(args);
+}
 
 void BustPlotCache() {
     ImPlot3DContext& gp = *GImPlot3D;
@@ -2959,6 +3100,20 @@ void SetupLock() {
 
 ImDrawList* GetPlotDrawList() { return ImGui::GetWindowDrawList(); }
 
+void PushPlotClipRect(float expand) {
+    ImPlot3DContext& gp = *GImPlot3D;
+    IM_ASSERT_USER_ERROR(gp.CurrentPlot != nullptr, "PushPlotClipRect() needs to be called between BeginPlot() and EndPlot()!");
+    SetupLock();
+    ImRect rect = gp.CurrentPlot->PlotRect;
+    rect.Expand(expand);
+    ImGui::PushClipRect(rect.Min, rect.Max, true);
+}
+
+void PopPlotClipRect() {
+    SetupLock();
+    ImGui::PopClipRect();
+}
+
 //-----------------------------------------------------------------------------
 // [SECTION] Styles
 //-----------------------------------------------------------------------------
@@ -2981,8 +3136,9 @@ static const ImPlot3DStyleVarInfo GPlot3DStyleVarInfo[] = {
     {ImGuiDataType_Float, 2, (ImU32)offsetof(ImPlot3DStyle, PlotDefaultSize)}, // ImPlot3DStyleVar_PlotDefaultSize
     {ImGuiDataType_Float, 2, (ImU32)offsetof(ImPlot3DStyle, PlotMinSize)},     // ImPlot3DStyleVar_PlotMinSize
     {ImGuiDataType_Float, 2, (ImU32)offsetof(ImPlot3DStyle, PlotPadding)},     // ImPlot3DStyleVar_PlotPadding
-    {ImGuiDataType_Float, 2, (ImU32)offsetof(ImPlot3DStyle, LabelPadding)},    // ImPlot3DStyleVar_LabelPadding
-    {ImGuiDataType_Float, 1, (ImU32)offsetof(ImPlot3DStyle, ViewScaleFactor)}, // ImPlot3DStyleVar_ViewScaleFactor
+    {ImGuiDataType_Float, 2, (ImU32)offsetof(ImPlot3DStyle, LabelPadding)},      // ImPlot3DStyleVar_LabelPadding
+    {ImGuiDataType_Float, 1, (ImU32)offsetof(ImPlot3DStyle, ViewScaleFactor)},   // ImPlot3DStyleVar_ViewScaleFactor
+    {ImGuiDataType_Float, 2, (ImU32)offsetof(ImPlot3DStyle, AnnotationPadding)}, // ImPlot3DStyleVar_AnnotationPadding
 
     // Legend style
     {ImGuiDataType_Float, 2, (ImU32)offsetof(ImPlot3DStyle, LegendPadding)},      // ImPlot3DStyleVar_LegendPadding
@@ -3448,6 +3604,7 @@ void ResetContext(ImPlot3DContext* ctx) {
     ctx->CurrentItem = nullptr;
     ctx->NextItemData.Reset();
     ctx->Style = ImPlot3DStyle();
+    ctx->Annotations.Reset();
 }
 
 //-----------------------------------------------------------------------------
@@ -4086,6 +4243,7 @@ ImPlot3DStyle::ImPlot3DStyle() {
     PlotPadding = ImVec2(10, 10);
     LabelPadding = ImVec2(5, 5);
     ViewScaleFactor = 1.0f;
+    AnnotationPadding = ImVec2(2, 2);
     // Legend style
     LegendPadding = ImVec2(10, 10);
     LegendInnerPadding = ImVec2(5, 5);

@@ -328,6 +328,56 @@ struct ImPlot3DColormapData {
     }
 };
 
+// Interior plot annotation
+struct ImPlot3DAnnotation {
+    ImVec2 Pos;
+    ImVec2 Offset;
+    ImU32 ColorBg;
+    ImU32 ColorFg;
+    int TextOffset;
+    bool Clamp;
+
+    ImPlot3DAnnotation() {
+        ColorBg = ColorFg = 0;
+        TextOffset = 0;
+        Clamp = false;
+    }
+};
+
+// Collection of plot annotations
+struct ImPlot3DAnnotationCollection {
+    ImVector<ImPlot3DAnnotation> Annotations;
+    ImGuiTextBuffer TextBuffer;
+
+    void AppendV(const ImVec2& pos, const ImVec2& off, ImU32 bg, ImU32 fg, bool clamp, const char* fmt, va_list args) IM_FMTLIST(7) {
+        ImPlot3DAnnotation an;
+        an.Pos = pos;
+        an.Offset = off;
+        an.ColorBg = bg;
+        an.ColorFg = fg;
+        an.TextOffset = TextBuffer.size();
+        an.Clamp = clamp;
+        Annotations.push_back(an);
+        TextBuffer.appendfv(fmt, args);
+        const char nul[] = "";
+        TextBuffer.append(nul, nul + 1);
+    }
+
+    void Append(const ImVec2& pos, const ImVec2& off, ImU32 bg, ImU32 fg, bool clamp, const char* fmt, ...) IM_FMTARGS(7) {
+        va_list args;
+        va_start(args, fmt);
+        AppendV(pos, off, bg, fg, clamp, fmt, args);
+        va_end(args);
+    }
+
+    const char* GetText(int idx) const { return TextBuffer.Buf.Data + Annotations[idx].TextOffset; }
+
+    void Reset() {
+        Annotations.shrink(0);
+        TextBuffer.Buf.shrink(0);
+    }
+};
+
 // State information for plot items
 struct ImPlot3DItem {
     ImGuiID ID;
@@ -361,6 +411,7 @@ struct ImPlot3DLegend {
     ImGuiTextBuffer Labels;
     ImRect Rect;
     ImRect RectClamped;
+    ImFont* Font;
     bool Hovered;
     bool Held;
 
@@ -369,6 +420,7 @@ struct ImPlot3DLegend {
         Hovered = Held = false;
         PreviousLocation = Location = ImPlot3DLocation_NorthWest;
         Scroll = ImVec2(0, 0);
+        Font = nullptr;
     }
 
     void Reset() {
@@ -825,6 +877,7 @@ struct ImPlot3DContext {
     ImVector<ImGuiStyleMod> StyleModifiers;
     ImVector<ImPlot3DColormap> ColormapModifiers;
     ImPlot3DColormapData ColormapData;
+    ImPlot3DAnnotationCollection Annotations;
 };
 
 //-----------------------------------------------------------------------------
@@ -858,6 +911,19 @@ static inline ImU32 CalcTextColor(const ImVec4& bg) {
     return (bg.x * 0.299f + bg.y * 0.587f + bg.z * 0.114f) > 0.5f ? IM_COL32_BLACK : IM_COL32_WHITE;
 }
 static inline ImU32 CalcTextColor(ImU32 bg) { return CalcTextColor(ImGui::ColorConvertU32ToFloat4(bg)); }
+
+// Clamps a label position so that it fits a rect defined by Min/Max
+static inline ImVec2 ClampLabelPos(ImVec2 pos, const ImVec2& size, const ImVec2& Min, const ImVec2& Max) {
+    if (pos.x < Min.x)
+        pos.x = Min.x;
+    if (pos.y < Min.y)
+        pos.y = Min.y;
+    if (pos.x + size.x > Max.x)
+        pos.x = Max.x - size.x;
+    if (pos.y + size.y > Max.y)
+        pos.y = Max.y - size.y;
+    return pos;
+}
 
 // Get styling data for next item (call between BeginItem/EndItem)
 IMPLOT3D_API const ImPlot3DNextItemData& GetItemData();
